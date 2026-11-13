@@ -20,6 +20,7 @@ use mime::{
         content_type::MimeContentType,
         datetime::MimeDateTime,
         message_id::MimeMessageId,
+        transfer_encoding::MimeTransferEncoding,
     },
 };
 
@@ -533,6 +534,53 @@ fn a_model_mismatching_its_body_is_refused() {
         Err(MimeBuildError::Structure)
     );
     let _ = MimeAddressList::default();
+}
+
+#[test]
+fn a_model_stating_a_structural_field_twice_is_written_from_its_first() {
+    let input = concat!(
+        "Content-Type: multipart/mixed; boundary=a\r\n",
+        "Content-Type: text/plain\r\n",
+        "\r\n",
+        "--a\r\n",
+        "Content-Type: text/csv\r\n",
+        "Content-Type: application/pdf\r\n",
+        "Content-Disposition: attachment; filename*=utf-8''premi%C3%A8re.csv\r\n",
+        "Content-Disposition: inline; filename*=utf-8''derni%C3%A8re.pdf\r\n",
+        "Content-Transfer-Encoding: base64\r\n",
+        "Content-Transfer-Encoding: 7bit\r\n",
+        "\r\n",
+        "YSxiCg==\r\n",
+        "--a--\r\n",
+    );
+    let opts = MimeBuildOptions {
+        legacy_name: true,
+        ..Default::default()
+    };
+    let bytes = MimeCst::parse(input.as_bytes())
+        .decode()
+        .to_bytes(&opts)
+        .unwrap();
+    let reread = MimeCst::parse(&bytes);
+    let entities = reread.entities();
+    let count = |index: usize, name: &str| entities[index].header.get_all(name).count();
+
+    assert_eq!(entities.len(), 2);
+    assert_eq!(count(0, "Content-Type"), 1);
+    assert!(reread.root.content_type().is("multipart", "mixed"));
+
+    assert_eq!(count(1, "Content-Type"), 1);
+    assert!(entities[1].content_type().is("text", "csv"));
+    assert_eq!(
+        entities[1].content_type().param("name").as_deref(),
+        Some("première.csv")
+    );
+    assert_eq!(count(1, "Content-Transfer-Encoding"), 1);
+    assert_eq!(
+        entities[1].transfer_encoding(),
+        MimeTransferEncoding::Base64
+    );
+    assert_eq!(entities[1].text().as_deref(), Some("a,b\r\n"));
 }
 
 mod properties {

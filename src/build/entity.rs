@@ -435,7 +435,7 @@ fn message<'m>(
 pub(crate) fn explicit(part: &Mime, digest: bool) -> Cow<'_, Mime> {
     let implicit = digest
         && matches!(part.body, MimeBody::Text(_))
-        && last(part, MimeHeaderKind::ContentType).is_none();
+        && first(part, MimeHeaderKind::ContentType).is_none();
 
     if !implicit {
         return Cow::Borrowed(part);
@@ -829,8 +829,8 @@ fn write_header(
     let content_type = body.content_type.clone().map(MimeHeaderValue::ContentType);
     let encoding = body.encoding.clone().map(MimeHeaderValue::TransferEncoding);
 
-    let last_type = last(mime, MimeHeaderKind::ContentType);
-    let last_encoding = last(mime, MimeHeaderKind::ContentTransferEncoding);
+    let first_type = first(mime, MimeHeaderKind::ContentType);
+    let first_encoding = first(mime, MimeHeaderKind::ContentTransferEncoding);
 
     let mut fields: Vec<(MimeHeaderName, Cow<'_, MimeHeaderValue>)> =
         Vec::with_capacity(mime.headers.len() + 3);
@@ -838,14 +838,14 @@ fn write_header(
     for (index, header) in mime.headers.iter().enumerate() {
         match header.name.kind() {
             Some(MimeHeaderKind::ContentType) => {
-                if Some(index) == last_type
+                if Some(index) == first_type
                     && let Some(value) = &content_type
                 {
                     fields.push((header.name.clone(), Cow::Borrowed(value)));
                 }
             }
             Some(MimeHeaderKind::ContentTransferEncoding) => {
-                if Some(index) == last_encoding
+                if Some(index) == first_encoding
                     && let Some(value) = &encoding
                 {
                     fields.push((header.name.clone(), Cow::Borrowed(value)));
@@ -855,14 +855,14 @@ fn write_header(
         }
     }
 
-    if last_type.is_none()
+    if first_type.is_none()
         && let Some(value) = &content_type
     {
         let name = MimeHeaderName::Known(MimeHeaderKind::ContentType);
         fields.push((name, Cow::Borrowed(value)));
     }
 
-    if last_encoding.is_none()
+    if first_encoding.is_none()
         && let Some(value) = &encoding
     {
         let name = MimeHeaderName::Known(MimeHeaderKind::ContentTransferEncoding);
@@ -924,10 +924,10 @@ fn write_header(
 
 /// The filename to repeat as a legacy `name` parameter, if any.
 ///
-/// A non-ASCII `filename` of the last Content-Disposition, when the content
+/// A non-ASCII `filename` of the first Content-Disposition, when the content
 /// type written has no `name`.
 fn legacy_name(mime: &Mime, body: &Body<'_>) -> Option<String> {
-    let index = last(mime, MimeHeaderKind::ContentDisposition)?;
+    let index = first(mime, MimeHeaderKind::ContentDisposition)?;
     let filename = mime.headers[index]
         .value
         .as_disposition()?
@@ -943,7 +943,7 @@ fn legacy_name(mime: &Mime, body: &Body<'_>) -> Option<String> {
 }
 
 fn declared_content_type(mime: &Mime) -> Option<&MimeContentType> {
-    let index = last(mime, MimeHeaderKind::ContentType)?;
+    let index = first(mime, MimeHeaderKind::ContentType)?;
 
     mime.headers[index]
         .value
@@ -952,15 +952,15 @@ fn declared_content_type(mime: &Mime) -> Option<&MimeContentType> {
 }
 
 fn declared_transfer_encoding(mime: &Mime) -> Option<&MimeTransferEncoding> {
-    let index = last(mime, MimeHeaderKind::ContentTransferEncoding)?;
+    let index = first(mime, MimeHeaderKind::ContentTransferEncoding)?;
     mime.headers[index].value.as_transfer_encoding()
 }
 
-/// The index of the last field of `kind`.
-fn last(mime: &Mime, kind: MimeHeaderKind) -> Option<usize> {
+/// The index of the first field of `kind`.
+fn first(mime: &Mime, kind: MimeHeaderKind) -> Option<usize> {
     mime.headers
         .iter()
-        .rposition(|header| header.name.kind() == Some(kind))
+        .position(|header| header.name.kind() == Some(kind))
 }
 
 fn is_content(name: &MimeHeaderName) -> bool {

@@ -446,6 +446,7 @@ fn the_corpus_is_classified() {
     let expected = [
         ("dovecot-malformed", 24, (0, 1, 23)),
         ("dovecot-thirdparty", 20, (0, 3, 17)),
+        ("pimdir-vectors", 1, (1, 0, 0)),
         ("stalwart-issues", 18, (0, 1, 17)),
         ("stalwart-regressions", 75, (0, 0, 75)),
         ("stalwart-rfc", 10, (0, 2, 8)),

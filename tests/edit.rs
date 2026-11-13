@@ -406,6 +406,57 @@ fn an_inserted_part_holding_the_boundary_regenerates_it() {
 }
 
 #[test]
+fn a_boundary_stated_twice_is_regenerated_in_its_first_field() {
+    let input = concat!(
+        "Content-Type: multipart/mixed; boundary=b1\r\n",
+        "Content-Type: multipart/mixed; boundary=b2\r\n",
+        "\r\n",
+        "--b1\r\n",
+        "\r\n",
+        "one\r\n",
+        "--b1--\r\n",
+    );
+    let mut cst = MimeCst::parse(input.as_bytes());
+    cst.insert_part(0, 9, &part("--b1\r\nnot a delimiter\r\n"), &opts())
+        .unwrap();
+
+    let bytes = cst.to_bytes();
+    let reread = MimeCst::parse(&bytes);
+    let boundary = reread.root.content_type().param("boundary").unwrap();
+
+    assert_ne!(boundary, "b1");
+    assert_eq!(reread.entities().len(), 3);
+    assert!(reread.anomalies().is_empty());
+    assert_eq!(
+        reread.entities()[2].text().as_deref(),
+        Some("--b1\r\nnot a delimiter\r\n")
+    );
+    assert!(
+        String::from_utf8_lossy(&bytes).contains("Content-Type: multipart/mixed; boundary=b2\r\n")
+    );
+}
+
+#[test]
+fn a_leaf_stating_its_transfer_encoding_twice_is_replaced_in_the_field_read() {
+    let input = concat!(
+        "Content-Type: application/octet-stream\r\n",
+        "Content-Transfer-Encoding: base64\r\n",
+        "Content-Transfer-Encoding: 7bit\r\n",
+        "\r\n",
+        "AAEC\r\n",
+    );
+    let mut cst = MimeCst::parse(input.as_bytes());
+    let content: Vec<u8> = (0..=255u8).collect();
+    cst.replace_content(0, &content, None, &opts()).unwrap();
+
+    let bytes = cst.to_bytes();
+    let reread = MimeCst::parse(&bytes);
+
+    assert_eq!(reread.root.decoded().unwrap().as_ref(), content.as_slice());
+    assert!(String::from_utf8_lossy(&bytes).contains("Content-Transfer-Encoding: 7bit\r\n"));
+}
+
+#[test]
 fn an_attachment_added_to_a_plain_draft_wraps_it() {
     let draft = concat!(
         "From: Alice <alice@example.com>\r\n",

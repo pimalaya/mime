@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING** Changed a `Content-Type`, `Content-Transfer-Encoding` or `Content-Disposition` an entity states twice to read from its first occurrence, where the last was read.
+
+  The parse, `MimeEntity::content_type`, `transfer_encoding`, `disposition` and `attachment_name`, the body lists, `Mime::content_type`, the writer and the edits read the first, in document order. `MimeHeaderBlock::get_all` still yields every occurrence.
+
 ### Fixed
 
 - Fixed an attached `message/rfc822` or `message/global` leaf written base64, which RFC 2046 5.2.1 forbids: its line breaks are now written as the build's line ending, and content no identity encoding carries is written as the nested message it holds.

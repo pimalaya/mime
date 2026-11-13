@@ -11,8 +11,13 @@ mod common;
 
 use mime::{
     codec::base64,
-    header::marker::{DATE, FROM, SUBJECT},
+    header::{
+        MimeHeaderKind,
+        marker::{CONTENT_ID, DATE, FROM, SUBJECT},
+    },
+    mime::MimeBody,
     tree::{cst::MimeCst, entity::MimeEntity},
+    value::{MimeHeaderValue, transfer_encoding::MimeTransferEncoding},
 };
 use serde_json::Value;
 
@@ -292,4 +297,172 @@ fn a_folded_value_unfolds_keeping_its_blanks() {
     let cst = MimeCst::parse(b"Subject: a\r\n  b\n\tc\r\n\r\n");
     let field = cst.root.header.get("subject").unwrap();
     assert_eq!(field.unfolded().as_ref(), b" a  b\tc");
+}
+
+fn indexes(entities: &[&MimeEntity<'_>], list: &[&MimeEntity<'_>]) -> Vec<usize> {
+    list.iter().map(|part| index_of(entities, part)).collect()
+}
+
+#[test]
+fn a_fixture_stating_its_structural_fields_twice_reads_their_first() {
+    let fixture = fixtures("pimdir-vectors", 1).remove(0);
+    let cst = MimeCst::parse(&fixture.bytes);
+    let entities = cst.entities();
+
+    assert_eq!(entities.len(), 3);
+    assert!(cst.root.content_type().is("multipart", "mixed"));
+    assert_eq!(
+        cst.root.content_type().param("boundary").as_deref(),
+        Some("b5")
+    );
+    assert!(cst.anomalies().is_empty());
+
+    let text = entities[1];
+    assert!(text.content_type().is("text", "plain"));
+    assert_eq!(text.text().as_deref(), Some("See the file."));
+
+    let file = entities[2];
+    assert!(file.content_type().is("text", "csv"));
+    assert_eq!(
+        file.content_type().param("name").as_deref(),
+        Some("first.csv")
+    );
+    assert!(file.disposition().unwrap().is("attachment"));
+    assert_eq!(file.attachment_name().as_deref(), Some("first.csv"));
+    assert_eq!(file.transfer_encoding(), MimeTransferEncoding::Base64);
+    assert_eq!(file.decoded().as_deref(), Some(&b"a,b\n"[..]));
+
+    let lists = cst.root.body_lists();
+    assert_eq!(indexes(&entities, &lists.text), [1]);
+    assert_eq!(indexes(&entities, &lists.html), [1]);
+    assert_eq!(indexes(&entities, &lists.attachments), [2]);
+
+    let mime = cst.decode();
+    assert!(mime.content_type().is("multipart", "mixed"));
+
+    let MimeBody::Multipart(parts) = &mime.body else {
+        panic!("a multipart: {:?}", mime.body);
+    };
+
+    assert!(parts[1].content_type().is("text", "csv"));
+    assert_eq!(parts[1].body, MimeBody::Text("a,b\n".into()));
+}
+
+#[test]
+fn a_content_type_stated_twice_reads_its_first() {
+    let message = concat!(
+        "Content-Type: multipart/mixed; boundary=a\r\n",
+        "Content-Type: multipart/mixed; boundary=b\r\n",
+        "\r\n",
+        "--a\r\n",
+        "Content-Type: text/plain; charset=iso-8859-1\r\n",
+        "Content-Type: text/html; charset=utf-8\r\n",
+        "\r\n",
+        "café\r\n",
+        "--b\r\n",
+        "\r\n",
+        "no part\r\n",
+        "--a--\r\n",
+    );
+    let cst = MimeCst::parse(message.as_bytes());
+    let entities = cst.entities();
+
+    assert_eq!(
+        cst.root.content_type().param("boundary").as_deref(),
+        Some("a")
+    );
+    assert_eq!(entities.len(), 2);
+    assert!(entities[1].content_type().is("text", "plain"));
+    assert_eq!(
+        entities[1].text().as_deref(),
+        Some("cafÃ©\r\n--b\r\n\r\nno part")
+    );
+    assert!(cst.decode().content_type().is("multipart", "mixed"));
+}
+
+#[test]
+fn a_transfer_encoding_stated_twice_reads_its_first() {
+    let message = concat!(
+        "Content-Type: multipart/mixed; boundary=a\r\n",
+        "\r\n",
+        "--a\r\n",
+        "Content-Transfer-Encoding: base64\r\n",
+        "Content-Transfer-Encoding: 7bit\r\n",
+        "\r\n",
+        "aGVsbG8=\r\n",
+        "--a\r\n",
+        "Content-Type: message/rfc822\r\n",
+        "Content-Transfer-Encoding: 7bit\r\n",
+        "Content-Transfer-Encoding: base64\r\n",
+        "\r\n",
+        "Subject: nested\r\n",
+        "\r\n",
+        "body\r\n",
+        "--a--\r\n",
+    );
+    let cst = MimeCst::parse(message.as_bytes());
+    let entities = cst.entities();
+
+    assert_eq!(
+        entities[1].transfer_encoding(),
+        MimeTransferEncoding::Base64
+    );
+    assert_eq!(entities[1].decoded().as_deref(), Some(&b"hello"[..]));
+    assert_eq!(entities[1].text().as_deref(), Some("hello"));
+
+    // NOTE: the parse reads the first too, so the message is nested.
+    assert_eq!(entities.len(), 4);
+    assert_eq!(
+        entities[2].transfer_encoding(),
+        MimeTransferEncoding::SevenBit
+    );
+    assert_eq!(entities[3].header::<SUBJECT>().as_deref(), Some("nested"));
+}
+
+#[test]
+fn a_disposition_stated_twice_reads_its_first() {
+    let message = concat!(
+        "Content-Type: multipart/mixed; boundary=a\r\n",
+        "\r\n",
+        "--a\r\n",
+        "\r\n",
+        "See the file.\r\n",
+        "--a\r\n",
+        "Content-Type: image/png\r\n",
+        "Content-Disposition: attachment; filename=\"first.png\"\r\n",
+        "Content-Disposition: inline; filename=\"second.png\"\r\n",
+        "\r\n",
+        "data\r\n",
+        "--a--\r\n",
+    );
+    let cst = MimeCst::parse(message.as_bytes());
+    let entities = cst.entities();
+
+    assert!(entities[2].disposition().unwrap().is("attachment"));
+    assert_eq!(entities[2].attachment_name().as_deref(), Some("first.png"));
+
+    let lists = cst.root.body_lists();
+    assert_eq!(indexes(&entities, &lists.text), [1]);
+    assert_eq!(indexes(&entities, &lists.attachments), [2]);
+}
+
+#[test]
+fn a_content_id_stated_twice_reads_its_first() {
+    let message = concat!(
+        "Content-ID: <first@example.org>\r\n",
+        "Content-ID: <second@example.org>\r\n",
+        "\r\n",
+    );
+    let cst = MimeCst::parse(message.as_bytes());
+
+    assert_eq!(
+        cst.root.header::<CONTENT_ID>().as_deref(),
+        Some(&[String::from("first@example.org")][..])
+    );
+    assert_eq!(
+        cst.decode()
+            .header(MimeHeaderKind::ContentId)
+            .and_then(MimeHeaderValue::as_message_ids),
+        Some(&[String::from("first@example.org")][..])
+    );
 }

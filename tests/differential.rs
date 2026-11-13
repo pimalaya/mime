@@ -14,11 +14,15 @@ mod differential;
 use mail_parser::MessageParser;
 use serde_json::Value;
 
-use crate::common::{fixtures, line_endings};
+use crate::{
+    common::{fixtures, line_endings},
+    differential::Rule,
+};
 
-const CORPORA: [(&str, usize); 6] = [
+const CORPORA: [(&str, usize); 7] = [
     ("dovecot-malformed", 24),
     ("dovecot-thirdparty", 20),
+    ("pimdir-vectors", 1),
     ("stalwart-issues", 18),
     ("stalwart-regressions", 75),
     ("stalwart-rfc", 10),
@@ -94,4 +98,78 @@ fn the_oracle_sees_a_part_text_or_list_read_otherwise() {
     let mut lists = answer;
     lists["messages"][0]["text_body"] = Value::Array(Vec::new());
     assert_eq!(paths(&lists), ["text_body"]);
+}
+
+#[test]
+fn a_structural_field_stated_twice_reads_otherwise_by_rule() {
+    let fixture = fixtures("pimdir-vectors", 1).remove(0).bytes;
+    let content_type = concat!(
+        "Content-Type: multipart/mixed; boundary=a\r\n",
+        "Content-Type: multipart/mixed; boundary=b\r\n",
+        "\r\n",
+        "--a\r\n",
+        "\r\n",
+        "one\r\n",
+        "--b\r\n",
+        "\r\n",
+        "two\r\n",
+        "--a--\r\n",
+    );
+    let charset = concat!(
+        "Content-Type: text/plain; charset=iso-8859-1\r\n",
+        "Content-Type: text/plain; charset=utf-8\r\n",
+        "\r\n",
+        "café\r\n",
+    );
+    let transfer_encoding = concat!(
+        "Content-Type: text/plain\r\n",
+        "Content-Transfer-Encoding: base64\r\n",
+        "Content-Transfer-Encoding: 7bit\r\n",
+        "\r\n",
+        "aGVsbG8=\r\n",
+    );
+    let disposition = concat!(
+        "Content-Type: multipart/mixed; boundary=a\r\n",
+        "\r\n",
+        "--a\r\n",
+        "\r\n",
+        "See the file.\r\n",
+        "--a\r\n",
+        "Content-Type: image/png\r\n",
+        "Content-Disposition: attachment; filename=\"first.png\"\r\n",
+        "Content-Disposition: inline; filename=\"second.png\"\r\n",
+        "\r\n",
+        "data\r\n",
+        "--a--\r\n",
+    );
+
+    for (name, input) in [
+        ("the fixture", fixture.as_slice()),
+        ("Content-Type", content_type.as_bytes()),
+        ("charset", charset.as_bytes()),
+        ("Content-Transfer-Encoding", transfer_encoding.as_bytes()),
+        ("Content-Disposition", disposition.as_bytes()),
+    ] {
+        let answer = answer(input).expect("mail-parser reads it");
+        let outcome = differential::compare(input, Some(&answer), false);
+
+        assert!(
+            outcome.differences.is_empty(),
+            "{name}: {:#?}",
+            outcome.differences
+        );
+        assert!(!outcome.rules.is_empty(), "{name}");
+        assert!(
+            outcome
+                .rules
+                .iter()
+                .all(|rule| *rule == Rule::RepeatedField),
+            "{name}: {:?}",
+            outcome.rules
+        );
+
+        // NOTE: with no rule, the oracle sees the two readings differ.
+        let strict = differential::compare(input, Some(&answer), true);
+        assert!(!strict.differences.is_empty(), "{name}");
+    }
 }

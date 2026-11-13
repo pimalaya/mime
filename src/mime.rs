@@ -60,11 +60,10 @@ impl Mime {
             .map(|header| &header.value)
     }
 
-    /// The last Content-Type field, or `text/plain` with none (RFC 2045 5.2).
+    /// The first Content-Type field, or `text/plain` with none (RFC 2045 5.2).
     pub fn content_type(&self) -> MimeContentType {
         self.headers
             .iter()
-            .rev()
             .find(|header| header.name.kind() == Some(MimeHeaderKind::ContentType))
             .and_then(|header| header.value.as_content_type().cloned())
             .unwrap_or_else(|| MimeContentType {

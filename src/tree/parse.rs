@@ -724,7 +724,7 @@ enum Kind<'a> {
 
 impl<'a> Kind<'a> {
     fn of(header: &MimeHeaderBlock<'a>, digest: bool) -> Self {
-        let Some(field) = header.get_all("Content-Type").last() else {
+        let Some(field) = header.get("Content-Type") else {
             return if digest { Self::Message } else { Self::Leaf };
         };
 
@@ -777,7 +777,7 @@ impl<'a> Kind<'a> {
 ///
 /// None, `7bit`, `8bit`, `binary`, or one this crate does not know.
 pub(crate) fn identity_encoding(header: &MimeHeaderBlock<'_>) -> bool {
-    let Some(field) = header.get_all("Content-Transfer-Encoding").last() else {
+    let Some(field) = header.get("Content-Transfer-Encoding") else {
         return true;
     };
 

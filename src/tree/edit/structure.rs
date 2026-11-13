@@ -342,7 +342,7 @@ impl<'a> MimeEntity<'a> {
             .header
             .items
             .iter()
-            .rposition(
+            .position(
                 |item| matches!(item, MimeHeaderItem::Field(field) if field.is("content-type")),
             )
             .ok_or(MimeEditError::NotAMultipart)?;

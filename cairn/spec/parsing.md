@@ -63,7 +63,16 @@ A field name SHALL be compared as written, ASCII case-insensitively: a name hold
 
 ### Requirement: Structure comes from the structural fields alone
 
-Parsing SHALL read only the Content-Type (type, subtype and `boundary`) and the Content-Transfer-Encoding of each entity, the last of each winning when a field repeats, and SHALL keep every other field value as an unparsed leaf. An entity with no Content-Type SHALL be a leaf, or a `message/rfc822` inside a `multipart/digest` (RFC 2046 5.1.5).
+Parsing SHALL read only the Content-Type (type, subtype and `boundary`) and the Content-Transfer-Encoding of each entity, each from its first occurrence when the entity states it twice, and SHALL keep every other field value as an unparsed leaf. An entity with no Content-Type SHALL be a leaf, or a `message/rfc822` inside a `multipart/digest` (RFC 2046 5.1.5).
+
+### Requirement: A structural field stated twice is read from its first occurrence
+
+When an entity states its Content-Type, Content-Transfer-Encoding, Content-Disposition or Content-ID more than once, every read of that field SHALL take its first occurrence, in document order, as `MimeEntity::header` reads any field: the parse (the kind of the body, its `boundary`, whether a message nests), `MimeEntity::content_type`, `transfer_encoding`, `disposition` and `attachment_name`, the decoding and the charset of a leaf, the body lists, and the field an edit rewrites. RFC 2045 3 gives an entity one of each and names no winner between two; the first is what the pimdir standard reads (STORAGE Annex A.1). `MimeHeaderBlock::get_all` SHALL still yield every occurrence. mail-parser 1.0 reads the last, which the differential oracle lets through by its `RepeatedField` rule.
+
+#### Scenario: A message and a part stating their fields twice
+- GIVEN tests/corpus/pimdir-vectors/mail-repeated-part-fields.eml, a message stating Content-Type twice (`multipart/mixed`, then `text/plain`) whose second part states Content-Type (`text/csv`, then `application/pdf`), Content-Disposition (`attachment` named `first.csv`, then `inline` named `second.pdf`) and Content-Transfer-Encoding (`base64`, then `7bit`) twice each
+- WHEN it is parsed
+- THEN the root is a multipart of two parts, and the second reads as `text/csv`, an attachment named `first.csv`, base64, of 4 decoded octets
 
 ### Requirement: The delimiter rule
 
@@ -139,7 +148,7 @@ Every leaf of a parsed tree SHALL borrow the input, and parsing SHALL copy no in
 
 ### Requirement: The corpus is swept
 
-Every vendored fixture SHALL parse, round-trip byte for byte as written and in its LF and CRLF forms, parse alike through both answerers, and, where it has a frozen answer, carry the structure that answer states (part tree, kinds, header, body and end offsets), unless tests/corpus/divergence.tsv holds a row for that fixture and path with its reason. The fixtures without frozen answers SHALL match mail-parser 1.0's offsets live. Each source directory SHALL assert its fixture count. Every fixture SHALL also read, as written and in both forms, as mail-parser 1.0 reads it live, but where a rule of the differential oracle (tests/common/differential.rs) records a deliberate difference and its reason. The fetched corpora (scripts/fetch-corpora.sh) SHALL be swept the same way by an ignored test, which also checks the round trip and the answerers, and the fuzz crate's `differential` target SHALL run the oracle over arbitrary bytes.
+Every vendored fixture SHALL parse, round-trip byte for byte as written and in its LF and CRLF forms, parse alike through both answerers, and, where it has a frozen answer, carry the structure that answer states (part tree, kinds, header, body and end offsets), unless tests/corpus/divergence.tsv holds a row for that fixture and path with its reason. The fixtures without frozen answers SHALL match mail-parser 1.0's offsets live, but the one of tests/corpus/pimdir-vectors, which states its structural fields twice and whose tree a test states. Each source directory SHALL assert its fixture count. Every fixture SHALL also read, as written and in both forms, as mail-parser 1.0 reads it live, but where a rule of the differential oracle (tests/common/differential.rs) records a deliberate difference and its reason. The fetched corpora (scripts/fetch-corpora.sh) SHALL be swept the same way by an ignored test, which also checks the round trip and the answerers, and the fuzz crate's `differential` target SHALL run the oracle over arbitrary bytes.
 
 ### Requirement: Structure is parsed as deep as asked
 

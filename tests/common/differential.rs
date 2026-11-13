@@ -172,6 +172,11 @@ pub enum Rule {
     /// address (RFC 5322 3.6.7), List-Id as a phrase and an identifier
     /// (RFC 2919 3), Disposition-Notification-To as mailboxes (RFC 8098).
     OtherForm,
+    /// A Content-Type, Content-Transfer-Encoding or Content-Disposition an
+    /// entity states twice is read from its first occurrence, in document
+    /// order, as any field read once is (spec parsing); mail-parser reads
+    /// the last.
+    RepeatedField,
 }
 
 /// One difference no rule explains.
@@ -438,8 +443,7 @@ impl Walk<'_, '_, '_> {
         let folded = self.entities.iter().any(|entity| {
             entity
                 .header
-                .get_all("Content-Type")
-                .last()
+                .get("Content-Type")
                 .is_some_and(|field| quoted_fold(field.value()))
         });
         let control = self.entities.iter().any(|entity| control_in_name(entity));
@@ -447,6 +451,11 @@ impl Walk<'_, '_, '_> {
             .entities
             .iter()
             .any(|entity| indented_first_line(entity));
+        // NOTE: a structural field stated twice anywhere makes another
+        // entity of its part, which moves the parts after it.
+        let repeated = self.entities.iter().any(|entity| {
+            restated(entity, "Content-Type") || restated(entity, "Content-Transfer-Encoding")
+        });
 
         if self.allow(Rule::ReusedBoundary, reused)
             || self.allow(Rule::LooseDelimiter, loose)
@@ -454,6 +463,7 @@ impl Walk<'_, '_, '_> {
             || self.allow(Rule::QuotedFold, folded)
             || self.allow(Rule::ControlInName, control)
             || self.allow(Rule::IndentedFirstLine, indented)
+            || self.allow(Rule::RepeatedField, repeated)
         {
             return;
         }
@@ -655,8 +665,7 @@ impl Walk<'_, '_, '_> {
         }) && entity.decoded().is_some_and(|bytes| !bytes.is_ascii());
         let encoding = entity
             .header
-            .get_all("Content-Transfer-Encoding")
-            .last()
+            .get("Content-Transfer-Encoding")
             .is_some_and(|field| {
                 let blank = |byte: &u8| matches!(byte, b' ' | b'\t' | b'\r' | b'\n');
                 let value = field.value();
@@ -686,6 +695,9 @@ impl Walk<'_, '_, '_> {
         let c1 = checked
             .as_ref()
             .is_some_and(|(text, _)| text.chars().any(|c| ('\u{80}'..='\u{9f}').contains(&c)));
+        // NOTE: the charset or the encoding mail-parser reads is another.
+        let repeated =
+            restated(entity, "Content-Type") || restated(entity, "Content-Transfer-Encoding");
 
         if let Some(expected) = part["text"].as_str() {
             let got = entity.text();
@@ -709,6 +721,7 @@ impl Walk<'_, '_, '_> {
                 && !self.allow(Rule::OddCharset, odd_charset)
                 && !self.allow(Rule::QuotedPrintableReported, qp_recovered)
                 && !self.allow(Rule::WhatwgTable, c1_holes)
+                && !self.allow(Rule::RepeatedField, repeated)
             {
                 self.differ(
                     format!("part[{ours}].text"),
@@ -723,6 +736,7 @@ impl Walk<'_, '_, '_> {
             if got != expected.as_bytes()
                 && !self.allow(Rule::QuotedPrintableReported, qp_recovered)
                 && !self.allow(Rule::MalformedTransferEncoding, encoding)
+                && !self.allow(Rule::RepeatedField, repeated)
             {
                 self.differ(
                     format!("part[{ours}].binary"),
@@ -837,6 +851,7 @@ impl Walk<'_, '_, '_> {
             && !self.allow(Rule::MalformedContentType, malformed)
             && !self.allow(Rule::OddCharset, odd_charset)
             && !self.allow(Rule::QuotedPrintableReported, qp_recovered)
+            && !self.allow(Rule::RepeatedField, repeated)
         {
             self.differ(
                 format!("part[{ours}].problems"),
@@ -1072,8 +1087,7 @@ impl Walk<'_, '_, '_> {
             malformed_content_type(entity)
                 || entity
                     .header
-                    .get_all("Content-Disposition")
-                    .last()
+                    .get("Content-Disposition")
                     .is_some_and(|field| !well_formed_disposition(field.value()))
         });
 
@@ -1082,6 +1096,11 @@ impl Walk<'_, '_, '_> {
             .entities
             .iter()
             .any(|entity| indented_first_line(entity));
+        // NOTE: the type or the disposition mail-parser reads is another,
+        // which moves the part between the lists.
+        let repeated = self.entities.iter().any(|entity| {
+            restated(entity, "Content-Type") || restated(entity, "Content-Disposition")
+        });
 
         for (name, list) in [
             ("text_body", &lists.text),
@@ -1101,6 +1120,7 @@ impl Walk<'_, '_, '_> {
                 && !self.allow(Rule::MalformedContentType, malformed)
                 && !self.allow(Rule::ControlInName, control)
                 && !self.allow(Rule::IndentedFirstLine, indented)
+                && !self.allow(Rule::RepeatedField, repeated)
             {
                 self.differ(name, format!("{got:?}"), format!("{expected:?}"));
             }
@@ -1111,6 +1131,7 @@ impl Walk<'_, '_, '_> {
             && !self.allow(Rule::MalformedContentType, malformed)
             && !self.allow(Rule::ControlInName, control)
             && !self.allow(Rule::IndentedFirstLine, indented)
+            && !self.allow(Rule::RepeatedField, repeated)
         {
             self.differ(
                 "has_attachments",
@@ -1140,13 +1161,23 @@ fn loose_delimiter(body: &[u8], boundary: &str) -> bool {
         })
 }
 
-/// Whether the entity's last Content-Type is outside the RFC 2045 grammar.
+/// Whether the entity's first Content-Type is outside the RFC 2045 grammar.
 fn malformed_content_type(entity: &MimeEntity<'_>) -> bool {
     entity
         .header
-        .get_all("Content-Type")
-        .last()
+        .get("Content-Type")
         .is_some_and(|field| !well_formed_content_type(field.value()))
+}
+
+/// Whether the entity states the field `name` twice and its last value,
+/// which mail-parser reads, is not its first, which this crate reads.
+fn restated(entity: &MimeEntity<'_>, name: &str) -> bool {
+    let mut fields = entity.header.get_all(name);
+    let first = fields.next().map(|field| field.value());
+
+    fields
+        .last()
+        .is_some_and(|last| Some(last.value()) != first)
 }
 
 /// Whether a Content-Type value follows RFC 2045 5.1: a type and a
@@ -1758,10 +1789,10 @@ fn address_blanks(ours: &Value, theirs: &mut Value) -> bool {
     any
 }
 
-/// Whether a parameter of the entity's last Content-Type follows no `;`
+/// Whether a parameter of the entity's first Content-Type follows no `;`
 /// on its line, as in `multipart/mixed boundary=b`.
 fn param_without_semicolon(entity: &MimeEntity<'_>) -> bool {
-    let Some(field) = entity.header.get_all("Content-Type").last() else {
+    let Some(field) = entity.header.get("Content-Type") else {
         return false;
     };
 

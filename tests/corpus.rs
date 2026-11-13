@@ -16,9 +16,10 @@ use crate::common::{
     Fixture, divergences, fixtures, frozen_shapes, line_endings, parse_scalar, shapes,
 };
 
-const CORPORA: [(&str, usize); 6] = [
+const CORPORA: [(&str, usize); 7] = [
     ("dovecot-malformed", 24),
     ("dovecot-thirdparty", 20),
+    ("pimdir-vectors", 1),
     ("stalwart-issues", 18),
     ("stalwart-regressions", 75),
     ("stalwart-rfc", 10),
