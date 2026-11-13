@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed an attached `message/rfc822` or `message/global` leaf written base64, which RFC 2046 5.2.1 forbids: its line breaks are now written as the build's line ending, and content no identity encoding carries is written as the nested message it holds.
+- Fixed a message this builder produced, attached by its bytes, breaking the outer multipart by sharing its generated boundary.
+
 ## [0.1.0] - 2026-11-04
 
 ### Added

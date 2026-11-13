@@ -11,7 +11,9 @@
 //! A leaf keeps its declared transfer encoding when valid for the content and
 //! the options. Otherwise a text leaf is `7bit`, else `8bit` if allowed, else
 //! the shorter of quoted-printable and base64; any other leaf is `binary` if
-//! allowed, else base64 (quoted-printable without the `base64` feature).
+//! allowed, else base64 (quoted-printable without the `base64` feature). A
+//! message leaf takes an identity encoding, its line breaks the build's, else
+//! is written as the nested message it holds.
 //!
 //! A multipart keeps its declared boundary unless its content holds it, else
 //! gets `=_mime-rs_` and a counter, the next value tried until one does not
@@ -71,6 +73,9 @@ pub(crate) fn write(
             opts,
             boundaries.taken,
         )?,
+        MimeBody::Binary(bytes) if declared_type.is_some_and(is_message) => {
+            message_leaf(bytes, declared_type, declared_encoding, opts, boundaries)?
+        }
         MimeBody::Binary(bytes) => binary_leaf(
             bytes,
             declared_type,
@@ -262,24 +267,8 @@ fn binary_leaf<'m>(
         .as_ref()
         .is_some_and(|content_type| content_type.is_top("multipart"));
 
-    // NOTE: a message takes no encoding but an identity one (RFC 2045 6.4),
-    // so it is written as is whenever one can carry it.
-    let message = content_type.as_ref().is_some_and(|content_type| {
-        content_type.is("message", "rfc822") || content_type.is("message", "global")
-    });
-    let identity = [
-        MimeTransferEncoding::SevenBit,
-        MimeTransferEncoding::EightBit,
-        MimeTransferEncoding::Binary,
-    ]
-    .into_iter()
-    .find(|encoding| message && valid(encoding, bytes, opts, taken));
-
     let (bytes, encoding) = if damaged && BASE64 {
         (Cow::Borrowed(bytes), Some(MimeTransferEncoding::Base64))
-    } else if let Some(encoding) = identity {
-        let stated = (encoding != MimeTransferEncoding::SevenBit).then_some(encoding);
-        (Cow::Borrowed(bytes), stated)
     } else {
         leaf(Cow::Borrowed(bytes), false, declared_encoding, opts, taken)
     };
@@ -289,6 +278,61 @@ fn binary_leaf<'m>(
         content_type,
         encoding,
     }
+}
+
+/// Whether a content type is `message/rfc822` or `message/global`.
+fn is_message(content_type: &MimeContentType) -> bool {
+    content_type.is("message", "rfc822") || content_type.is("message", "global")
+}
+
+/// A message given as bytes, its line breaks the build's line ending.
+///
+/// A message takes no encoding but an identity one (RFC 2046 5.2.1), so it
+/// is written as is under the first one that can carry it, else parsed and
+/// written as the nested message it holds, its own leaves encoded. Content
+/// opening with no field, or a build without the parser, is written as any
+/// other leaf.
+fn message_leaf<'m>(
+    bytes: &'m [u8],
+    declared: Option<&MimeContentType>,
+    declared_encoding: Option<&MimeTransferEncoding>,
+    opts: &MimeBuildOptions,
+    boundaries: &mut Boundaries<'_>,
+) -> Result<Body<'m>, MimeBuildError> {
+    let eol = opts.line_ending.as_bytes();
+    let bytes = line_breaks(Cow::Borrowed(bytes), eol);
+    let content_type = declared.cloned();
+
+    let identity = [
+        MimeTransferEncoding::SevenBit,
+        MimeTransferEncoding::EightBit,
+        MimeTransferEncoding::Binary,
+    ]
+    .into_iter()
+    .find(|encoding| valid(encoding, &bytes, opts, boundaries.taken));
+
+    if let Some(encoding) = identity {
+        let stated = (encoding != MimeTransferEncoding::SevenBit).then_some(encoding);
+        return Ok(Body {
+            bytes,
+            content_type,
+            encoding: stated,
+        });
+    }
+
+    #[cfg(feature = "parser")]
+    if crate::tree::parse::starts_with_field(&bytes) {
+        let nested = crate::tree::cst::MimeCst::parse(&bytes).decode();
+        return message(&nested, declared, declared_encoding, opts, boundaries);
+    }
+
+    let (bytes, encoding) = leaf(bytes, false, declared_encoding, opts, boundaries.taken);
+
+    Ok(Body {
+        bytes,
+        content_type,
+        encoding,
+    })
 }
 
 /// Writes a multipart's parts apart, then picks a boundary none of them holds.
@@ -563,15 +607,19 @@ fn tainted(mime: &Mime, opts: &MimeBuildOptions) -> bool {
         || match &mime.body {
             MimeBody::Text(text) => text.contains(PREFIX),
             MimeBody::Binary(bytes) => {
+                // NOTE: a message is written as is, or as the nested message
+                // it holds, whatever encoding it declares.
+                let message = declared_content_type(mime).is_some_and(is_message);
                 let declared = declared_transfer_encoding(mime)
                     .filter(|encoding| valid(encoding, bytes, opts, &[]));
-                let raw = match declared {
-                    Some(encoding) => !matches!(
-                        encoding,
-                        MimeTransferEncoding::QuotedPrintable | MimeTransferEncoding::Base64
-                    ),
-                    None => valid(&MimeTransferEncoding::Binary, bytes, opts, &[]),
-                };
+                let raw = message
+                    || match declared {
+                        Some(encoding) => !matches!(
+                            encoding,
+                            MimeTransferEncoding::QuotedPrintable | MimeTransferEncoding::Base64
+                        ),
+                        None => valid(&MimeTransferEncoding::Binary, bytes, opts, &[]),
+                    };
 
                 raw && contains(bytes, PREFIX.as_bytes())
             }

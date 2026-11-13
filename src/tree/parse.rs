@@ -878,7 +878,7 @@ fn line_delimiters(
 ///
 /// It holds a colon and starts with no blank: a nested message whose content
 /// opens with no field is not one.
-fn starts_with_field(bytes: &[u8]) -> bool {
+pub(crate) fn starts_with_field(bytes: &[u8]) -> bool {
     let line = bytes
         .split(|byte| *byte == b'\n')
         .next()

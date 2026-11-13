@@ -936,6 +936,93 @@ mod review {
         );
     }
 
+    fn attaching(content: &[u8], opts: &MimeBuildOptions) -> Vec<u8> {
+        let mut builder = MimeBuilder::default();
+        builder
+            .text("see attached")
+            .attachment(MimeAttachment {
+                content_type: MimeContentType {
+                    top: "message".into(),
+                    sub: "rfc822".into(),
+                    params: vec![],
+                },
+                filename: Some("inner.eml".into()),
+                content: content.to_vec(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        builder.write(opts).unwrap()
+    }
+
+    fn composite_encoded(bytes: &[u8]) -> bool {
+        MimeCst::parse(bytes)
+            .check()
+            .problems
+            .iter()
+            .any(|p| p.rule == MimeValidateRule::CompositeEncoding)
+    }
+
+    #[test]
+    fn an_attached_message_with_lf_line_breaks_takes_the_build_line_ending() {
+        let bytes = attaching(
+            b"Subject: inner\nFrom: a@example.org\n\nbody\n",
+            &MimeBuildOptions::default(),
+        );
+        let text = String::from_utf8(bytes.clone()).unwrap();
+
+        assert!(!composite_encoded(&bytes), "{text}");
+        assert!(text.contains("\r\nSubject: inner\r\nFrom: a@example.org\r\n\r\nbody\r\n"));
+        assert!(!text.contains("Content-Transfer-Encoding"), "{text}");
+    }
+
+    #[test]
+    fn an_attached_8bit_message_is_nested_when_8bit_is_not_allowed() {
+        let inner = concat!(
+            "Subject: caf\u{e9}\r\n",
+            "Content-Type: text/plain; charset=utf-8\r\n",
+            "Content-Transfer-Encoding: 8bit\r\n",
+            "\r\n",
+            "\u{e9}t\u{e9}\r\n",
+        );
+
+        let bytes = attaching(inner.as_bytes(), &MimeBuildOptions::default());
+        assert!(bytes.is_ascii());
+        assert!(!composite_encoded(&bytes));
+
+        let theirs = mail_parser::MessageParser::new().parse(&bytes).unwrap();
+        let attached = theirs.attachments().next().unwrap().nested().unwrap();
+        assert_eq!(attached.subject(), Some("caf\u{e9}"));
+        assert_eq!(attached.body_text(0).as_deref(), Some("\u{e9}t\u{e9}\r\n"));
+
+        let opts = MimeBuildOptions {
+            allow_8bit: true,
+            ..Default::default()
+        };
+        let bytes = attaching(inner.as_bytes(), &opts);
+        assert!(bytes.windows(inner.len()).any(|w| w == inner.as_bytes()));
+        assert!(!composite_encoded(&bytes));
+    }
+
+    #[test]
+    fn an_attached_message_holding_a_generated_boundary_keeps_its_parts() {
+        let inner = attaching(
+            b"Subject: innermost\r\n\r\nbody\r\n",
+            &MimeBuildOptions::default(),
+        );
+        let bytes = attaching(&inner, &MimeBuildOptions::default());
+
+        let cst = MimeCst::parse(&bytes);
+        let outer = cst.root.content_type().param("boundary").unwrap();
+        let inner = MimeCst::parse(&inner);
+        let inner = inner.root.content_type().param("boundary").unwrap();
+
+        assert_ne!(outer, inner);
+        assert!(cst.anomalies().is_empty(), "{:?}", cst.anomalies());
+        assert_eq!(cst.entities().len(), 7);
+        assert!(!composite_encoded(&bytes));
+    }
+
     #[test]
     fn the_raw_escape_hatch_keeps_to_the_reserved_fields_and_the_line_limit() {
         let mut builder = MimeBuilder::default();
