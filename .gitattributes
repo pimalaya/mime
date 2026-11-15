@@ -1,0 +1,3 @@
+# The corpus is byte-exact: mail is CRLF on the wire, and several fixtures
+# exist to exercise bare LF or mixed line ends, so no checkout converts them.
+tests/corpus/** -text
