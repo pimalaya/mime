@@ -89,6 +89,20 @@ impl<'a> MimeHeaderBlock<'a> {
         self.items.is_empty() && self.end.is_empty()
     }
 
+    /// The length of the block as written, its empty end line included.
+    pub fn len(&self) -> usize {
+        let items: usize = self
+            .items
+            .iter()
+            .map(|item| match item {
+                MimeHeaderItem::Field(field) => field.line().len(),
+                MimeHeaderItem::Opaque(line) => line.len(),
+            })
+            .sum();
+
+        items + self.end.len()
+    }
+
     pub(crate) fn push_chunks<'s>(&'s self, out: &mut Vec<&'s [u8]>) {
         for item in &self.items {
             match item {

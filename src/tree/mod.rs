@@ -10,7 +10,8 @@
 //! its bytes and an edit owns only what it writes.
 //!
 //! [`parse::MimeParse`] builds it as an I/O-free coroutine over the answers
-//! of [`scan`]; [`anomaly`] names what it worked around. This whole layer
+//! of [`scan`]; [`anomaly`] names what it worked around. [`span`] locates
+//! every entity in the bytes, in IMAP part-number order. This whole layer
 //! is gated behind the `parser` feature, so the decoded model can be
 //! depended on without it.
 
@@ -25,4 +26,5 @@ pub mod header;
 pub mod lists;
 pub mod parse;
 pub mod scan;
+pub mod span;
 pub mod validator;

@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Added `tree::span`: `MimeCst::spans`, the byte ranges of every entity, its header block and its body in the serialized message, and `MimeCst::sections`, every entity walked in IMAP part-number order with the ranges of `BODY[n]`, `BODY[n.MIME]`, `BODY[n.HEADER]` and `BODY[n.TEXT]`.
+- Added `MimeHeaderBlock::len`, the written length of a header block.
+
 ## [0.2.0] - 2026-11-15
 
 ### Changed
