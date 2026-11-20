@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-20
+
 ### Added
 
 - Added `tree::span`: `MimeCst::spans`, the byte ranges of every entity, its header block and its body in the serialized message, and `MimeCst::sections`, every entity walked in IMAP part-number order with the ranges of `BODY[n]`, `BODY[n.MIME]`, `BODY[n.HEADER]` and `BODY[n.TEXT]`.
@@ -57,6 +59,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Added sealing of signed and encrypted content, with `MimeCst::protector` and `MimeCst::unwrap_protected`.
 - Added `Mime::check`, `Mime::validate`, `MimeCst::check` and `MimeCst::validate`, the validator, with `validator::MimeValid` and `validator::MimeTransport`.
 
-[Unreleased]: https://github.com/pimalaya/mime/compare/v0.2.0..HEAD
+[Unreleased]: https://github.com/pimalaya/mime/compare/v0.2.1..HEAD
+[0.2.1]: https://github.com/pimalaya/mime/compare/v0.2.0..v0.2.1
 [0.2.0]: https://github.com/pimalaya/mime/compare/v0.1.0..v0.2.0
 [0.1.0]: https://github.com/pimalaya/mime/compare/root..v0.1.0
